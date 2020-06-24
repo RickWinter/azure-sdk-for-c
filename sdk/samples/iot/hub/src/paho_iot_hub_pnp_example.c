@@ -83,6 +83,106 @@ static const az_span current_temp_property_name = AZ_SPAN_LITERAL_FROM_STR("curr
 static az_span reported_property_topic_request_id = AZ_SPAN_LITERAL_FROM_STR("reported_prop");
 static char reported_property_payload[64];
 
+//
+// Configuration and connection functions
+//
+static az_result read_configuration_and_init_client();
+static az_result read_configuration_entry(
+    const char* name,
+    const char* env_name,
+    char* default_value,
+    bool hide_value,
+    az_span buffer,
+    az_span* out_value);
+static az_result create_mqtt_endpoint(char* destination, int32_t destination_size, az_span iot_hub);
+static int connect_device();
+static int subscribe();
+
+//
+// Messaging functions
+//
+static int on_received(void* context, char* topicName, int topicLen, MQTTClient_message* message);
+static int send_telemetry_messages();
+static int send_method_response(
+    az_iot_hub_client_method_request* request,
+    uint16_t status,
+    az_span response);
+static int send_reported_temperature_property(double desired_temp);
+static az_result parse_desired_temperature_property(az_span twin_span, double* parsed_value);
+
+int main()
+{
+  int rc;
+
+  // Read in the necessary environment variables and initialize the az_iot_hub_client
+  if (az_failed(rc = read_configuration_and_init_client()))
+  {
+    printf("Failed to read configuration from environment variables, return code %d\n", rc);
+    return rc;
+  }
+
+  // Get the MQTT client id used for the MQTT connection
+  size_t client_id_length;
+  if (az_failed(
+          rc = az_iot_hub_client_get_client_id(
+              &client, mqtt_client_id, sizeof(mqtt_client_id), &client_id_length)))
+  {
+    printf("Failed to get MQTT clientId, return code %d\n", rc);
+    return rc;
+  }
+
+  // Create the Paho MQTT client
+  if ((rc = MQTTClient_create(
+           &mqtt_client, mqtt_endpoint, mqtt_client_id, MQTTCLIENT_PERSISTENCE_NONE, NULL))
+      != MQTTCLIENT_SUCCESS)
+  {
+    printf("Failed to create MQTT client, return code %d\n", rc);
+    return rc;
+  }
+
+  // Set the callback for incoming MQTT messages
+  if ((rc = MQTTClient_setCallbacks(mqtt_client, NULL, NULL, on_received, NULL))
+      != MQTTCLIENT_SUCCESS)
+  {
+    printf("Failed to set MQTT callbacks, return code %d\n", rc);
+    return rc;
+  }
+
+  // Connect to IoT Hub
+  if ((rc = connect_device()) != 0)
+  {
+    return rc;
+  }
+
+  // Subscribe to the necessary twin and methods topics to receive twin updates and responses
+  if ((rc = subscribe()) != 0)
+  {
+    return rc;
+  }
+
+  // Loop and send 5 messages
+  if ((rc = send_telemetry_messages()) != 0)
+  {
+    return rc;
+  }
+
+  printf("Telemetry Sent | Waiting for messages from the Azure IoT Hub\n[Press ENTER to shut "
+         "down]\n\n");
+  (void)getchar();
+
+  // Gracefully disconnect: send the disconnect packet and close the socket
+  if ((rc = MQTTClient_disconnect(mqtt_client, TIMEOUT_MQTT_DISCONNECT_MS)) != MQTTCLIENT_SUCCESS)
+  {
+    printf("Failed to disconnect MQTT client, return code %d\n", rc);
+    return rc;
+  }
+  printf("Disconnected.\n");
+
+  // Clean up and release resources allocated by the mqtt client
+  MQTTClient_destroy(&mqtt_client);
+
+  return 0;
+}
 
 static void sleep_seconds(uint32_t seconds)
 {
@@ -257,7 +357,7 @@ static int build_reported_property(az_json_builder* json_builder, double propert
   return result;
 }
 
-static int send_reported_temp_property(double desired_temp)
+static int send_reported_temperature_property(double desired_temp)
 {
   int rc;
   printf("Sending reported property\n");
@@ -302,7 +402,7 @@ static int send_reported_temp_property(double desired_temp)
   return rc;
 }
 
-static az_result parse_desired_temp_property(az_span twin_span, double* parsed_value)
+static az_result parse_desired_temperature_property(az_span twin_span, double* parsed_value)
 {
   az_result result;
 
@@ -371,8 +471,8 @@ static int on_received(void* context, char* topicName, int topicLen, MQTTClient_
         printf("Payload:\n%.*s\n", message->payloadlen, (char*)message->payload);
         az_span twin_span = az_span_init((uint8_t*)message->payload, (int32_t)message->payloadlen);
 
-        parse_desired_temp_property(twin_span, &current_device_temp);
-        send_reported_temp_property(current_device_temp);
+        parse_desired_temperature_property(twin_span, &current_device_temp);
+        send_reported_temperature_property(current_device_temp);
 
         break;
       // A response from a twin reported properties publish message. With a successfull update of
@@ -542,78 +642,4 @@ static int send_telemetry_messages()
     sleep_seconds(TELEMETRY_SEND_INTERVAL);
   }
   return rc;
-}
-
-int main()
-{
-  int rc;
-
-  // Read in the necessary environment variables and initialize the az_iot_hub_client
-  if (az_failed(rc = read_configuration_and_init_client()))
-  {
-    printf("Failed to read configuration from environment variables, return code %d\n", rc);
-    return rc;
-  }
-
-  // Get the MQTT client id used for the MQTT connection
-  size_t client_id_length;
-  if (az_failed(
-          rc = az_iot_hub_client_get_client_id(
-              &client, mqtt_client_id, sizeof(mqtt_client_id), &client_id_length)))
-  {
-    printf("Failed to get MQTT clientId, return code %d\n", rc);
-    return rc;
-  }
-
-  // Create the Paho MQTT client
-  if ((rc = MQTTClient_create(
-           &mqtt_client, mqtt_endpoint, mqtt_client_id, MQTTCLIENT_PERSISTENCE_NONE, NULL))
-      != MQTTCLIENT_SUCCESS)
-  {
-    printf("Failed to create MQTT client, return code %d\n", rc);
-    return rc;
-  }
-
-  // Set the callback for incoming MQTT messages
-  if ((rc = MQTTClient_setCallbacks(mqtt_client, NULL, NULL, on_received, NULL))
-      != MQTTCLIENT_SUCCESS)
-  {
-    printf("Failed to set MQTT callbacks, return code %d\n", rc);
-    return rc;
-  }
-
-  // Connect to IoT Hub
-  if ((rc = connect_device()) != 0)
-  {
-    return rc;
-  }
-
-  // Subscribe to the necessary twin and methods topics to receive twin updates and responses
-  if ((rc = subscribe()) != 0)
-  {
-    return rc;
-  }
-
-  // Loop and send 5 messages
-  if ((rc = send_telemetry_messages()) != 0)
-  {
-    return rc;
-  }
-
-  printf("Telemetry Sent | Waiting for messages from the Azure IoT Hub\n[Press ENTER to shut "
-         "down]\n\n");
-  (void)getchar();
-
-  // Gracefully disconnect: send the disconnect packet and close the socket
-  if ((rc = MQTTClient_disconnect(mqtt_client, TIMEOUT_MQTT_DISCONNECT_MS)) != MQTTCLIENT_SUCCESS)
-  {
-    printf("Failed to disconnect MQTT client, return code %d\n", rc);
-    return rc;
-  }
-  printf("Disconnected.\n");
-
-  // Clean up and release resources allocated by the mqtt client
-  MQTTClient_destroy(&mqtt_client);
-
-  return 0;
 }

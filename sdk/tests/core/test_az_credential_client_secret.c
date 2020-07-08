@@ -3,10 +3,10 @@
 
 #include "az_test_definitions.h"
 #include <azure/core/az_credentials.h>
-#include <azure/core/internal/az_credentials_internal.h>
-#include <azure/core/internal/az_http_internal.h>
 #include <azure/core/az_http_transport.h>
 #include <azure/core/az_span.h>
+#include <azure/core/internal/az_credentials_internal.h>
+#include <azure/core/internal/az_http_internal.h>
 
 #include <stddef.h>
 
@@ -89,6 +89,7 @@ static void test_credential_client_secret(void** state)
 
 #ifdef _az_MOCK_ENABLED
     will_return_count(__wrap_az_platform_clock_msec, clock_value[i], clock_nrequests[i]);
+    will_return(__wrap_usleep, 0);
     ignore = az_http_pipeline_process(&pipeline, &request, &response);
     assert_true(az_span_is_content_equal(expected_responses[i], response._internal.http_response));
 #else // _az_MOCK_ENABLED
@@ -240,15 +241,21 @@ az_result send_request(_az_http_request const* request, az_http_response* respon
 }
 
 #ifdef _az_MOCK_ENABLED
-az_result __wrap_az_http_client_send_request(_az_http_request const* request, az_http_response* ref_response);
+az_result __wrap_az_http_client_send_request(
+    _az_http_request const* request,
+    az_http_response* ref_response);
 int64_t __wrap_az_platform_clock_msec();
+void __wrap_usleep();
 
-az_result __wrap_az_http_client_send_request(_az_http_request const* request, az_http_response* ref_response)
+az_result __wrap_az_http_client_send_request(
+    _az_http_request const* request,
+    az_http_response* ref_response)
 {
   return send_request(request, ref_response);
 }
 
 int64_t __wrap_az_platform_clock_msec() { return (int64_t)mock(); }
+void __wrap_usleep() {}
 #endif // _az_MOCK_ENABLED
 
 int test_az_credential_client_secret()

@@ -4,9 +4,9 @@
 #include "az_test_definitions.h"
 #include <azure/core/az_credentials.h>
 #include <azure/core/az_http.h>
-#include <azure/core/internal/az_http_internal.h>
 #include <azure/core/az_http_transport.h>
 #include <azure/core/az_span.h>
+#include <azure/core/internal/az_http_internal.h>
 
 #include <setjmp.h>
 #include <stdarg.h>
@@ -241,6 +241,7 @@ void test_az_http_pipeline_policy_retry(void** state)
 
   // set clock sec required when retrying (will retry 4 times)
   will_return_count(__wrap_az_platform_clock_msec, 0, 4);
+  will_return_count(__wrap_usleep, 0, 4);
   az_http_response response;
   assert_return_code(
       az_http_pipeline_policy_retry(policies, &retry_options, &request, &response), AZ_OK);
@@ -281,6 +282,7 @@ void test_az_http_pipeline_policy_retry_with_header(void** state)
         };
 
   will_return(__wrap_az_platform_clock_msec, 0);
+  will_return(__wrap_usleep, 0);
 
   az_http_response response;
   assert_return_code(
@@ -322,6 +324,7 @@ void test_az_http_pipeline_policy_retry_with_header_2(void** state)
         };
 
   will_return(__wrap_az_platform_clock_msec, 0);
+  will_return(__wrap_usleep, 0);
 
   az_http_response response;
   assert_return_code(

@@ -12,6 +12,7 @@
  * and they are subject to change in future versions of the SDK which would break your code.
  */
 
+// Only include once
 #ifndef _az_HTTP_PRIVATE_H
 #define _az_HTTP_PRIVATE_H
 
